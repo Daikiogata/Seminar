@@ -14,23 +14,39 @@ const DEFAULT_SEQUENCE: Step[] = [
 ]
 
 export default function ServerinTimerPage() {
-  const [sequence, setSequence] = useState<Step[]>(() => {
-    try {
-      const raw = localStorage.getItem("workout_sequence")
-      if (!raw) return DEFAULT_SEQUENCE
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_SEQUENCE
-      return parsed.map((p: any) => ({ label: String(p.label ?? ""), duration: Number(p.duration ?? 0) }))
-    } catch (e) {
-      return DEFAULT_SEQUENCE
-    }
-  })
+  const [sequence, setSequence] = useState<Step[]>(DEFAULT_SEQUENCE)
 
   const [index, setIndex] = useState(0)
   const [timeLeft, setTimeLeft] = useState(sequence[0]?.duration ?? 0)
   const [running, setRunning] = useState(false)
   const [finished, setFinished] = useState(false)
   const intervalRef = useRef<number | null>(null)
+  const [deleteIndex, setDeleteIndex] = useState<number | null>(null)
+  const [presets, setPresets] = useState<{ name: string; seq: Step[] }[]>([])
+
+  // Load stored sequence and presets on mount to avoid SSR/CSR hydration mismatch
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("workout_sequence")
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSequence(parsed.map((p: any) => ({ label: String(p.label ?? ""), duration: Number(p.duration ?? 0) })))
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    try {
+      const rawP = localStorage.getItem("workout_presets")
+      if (rawP) {
+        const parsedP = JSON.parse(rawP)
+        if (Array.isArray(parsedP)) setPresets(parsedP)
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [])
 
   useEffect(() => {
     setTimeLeft(sequence[index]?.duration ?? 0)
@@ -117,6 +133,71 @@ export default function ServerinTimerPage() {
     const duration = Math.max(0, Number(durationRaw) || 0)
     setSequence((s) => s.map((st, idx) => (idx === i ? { ...st, duration } : st)))
   }
+  function moveUp(i: number) {
+    if (i <= 0) return
+    setSequence((s) => {
+      const arr = [...s]
+      ;[arr[i - 1], arr[i]] = [arr[i], arr[i - 1]]
+      return arr
+    })
+  }
+  function moveDown(i: number) {
+    setSequence((s) => {
+      if (i >= s.length - 1) return s
+      const arr = [...s]
+      ;[arr[i + 1], arr[i]] = [arr[i], arr[i + 1]]
+      return arr
+    })
+  }
+  function confirmRemove(i: number) {
+    setDeleteIndex(i)
+  }
+  function doRemove() {
+    if (deleteIndex == null) return
+    removeStep(deleteIndex)
+    setDeleteIndex(null)
+  }
+  function cancelRemove() {
+    setDeleteIndex(null)
+  }
+  function savePreset() {
+    const name = prompt("プリセット名を入力してください")
+    if (!name) return
+    const p = { name, seq: sequence }
+    const next = [...presets.filter((pr) => pr.name !== name), p]
+    setPresets(next)
+    localStorage.setItem("workout_presets", JSON.stringify(next))
+    alert("プリセットを保存しました")
+  }
+  function loadPreset(i: number) {
+    const p = presets[i]
+    if (!p) return
+    setSequence(p.seq)
+  }
+  function exportJSON() {
+    const data = JSON.stringify(sequence, null, 2)
+    const blob = new Blob([data], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "workout_sequence.json"
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  function importJSON(file: File | null) {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result))
+        if (!Array.isArray(parsed)) throw new Error("invalid")
+        setSequence(parsed.map((p: any) => ({ label: String(p.label ?? ""), duration: Number(p.duration ?? 0) })))
+      } catch (e) {
+        alert("インポートに失敗しました: JSON形式を確認してください。")
+      }
+    }
+    reader.readAsText(file)
+  }
   function addStep() {
     setSequence((s) => [...s, { label: "新しいメニュー", duration: 30 }])
   }
@@ -131,51 +212,92 @@ export default function ServerinTimerPage() {
     setFinished(false)
   }
 
+  const isStepValid = (s: Step) => s.label.trim().length > 0 && s.duration >= 1 && s.duration <= 600
+  const allValid = sequence.length > 0 && sequence.every(isStepValid)
+
   return (
-    <div style={{ padding: 20, fontFamily: "sans-serif", maxWidth: 720, margin: "0 auto" }}>
-      <h1 style={{ marginBottom: 8 }}>7分ワークアウト</h1>
-
-      <div style={{ border: "1px solid #ddd", padding: 12, borderRadius: 8, marginBottom: 12 }}>
-        <h3 style={{ marginTop: 0 }}>メニュー設定</h3>
-        {sequence.map((s: Step, i: number) => (
-          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-            <input value={s.label} onChange={(e) => updateStepLabel(i, e.target.value)} style={{ flex: 1, padding: 6 }} />
-            <input value={String(s.duration)} onChange={(e) => updateStepDuration(i, e.target.value)} type="number" min={0} style={{ width: 80, padding: 6 }} />
-            <button onClick={() => removeStep(i)} style={{ padding: "6px 8px" }}>削除</button>
-          </div>
-        ))}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={addStep} style={{ padding: "8px 12px" }}>ステップを追加</button>
-          <button onClick={resetToDefaults} style={{ padding: "8px 12px" }}>デフォルトに戻す</button>
+    <div>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <h1 className="app-title">7-Min Workout</h1>
+          <div style={{ marginLeft: 8, color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Workout Timer</div>
         </div>
+      </header>
+      <div className="workout-root">
+      <div className="panels">
+        <aside className="menu-panel" aria-labelledby="menu-title">
+          <h3 id="menu-title">Menu Settings</h3>
+          {sequence.map((s: Step, i: number) => (
+            <div key={i} className="menu-row">
+              <div className="step-index">{i + 1}</div>
+              <input aria-label={`Step ${i + 1} name`} value={s.label} onChange={(e) => updateStepLabel(i, e.target.value)} className="menu-input label" placeholder="Exercise name" />
+              <input aria-label={`Step ${i + 1} seconds`} value={String(s.duration)} onChange={(e) => updateStepDuration(i, e.target.value)} type="number" min={0} className="menu-input duration" />
+              <div className="menu-actions">
+                <button aria-label="上へ" onClick={() => moveUp(i)} className="icon">▲</button>
+                <button aria-label="下へ" onClick={() => moveDown(i)} className="icon">▼</button>
+                <button aria-label="削除" onClick={() => confirmRemove(i)} className="danger">削除</button>
+              </div>
+              {!isStepValid(s) && (
+                <div style={{ color: "#ff6b6b", fontSize: 12, marginTop: 4, marginLeft: 48 }}>
+                  {s.label.trim().length === 0 ? "Please enter a name." : s.duration < 1 || s.duration > 600 ? "Duration must be between 1 and 600 seconds." : null}
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="menu-controls">
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={addStep} className="btn">ステップを追加</button>
+              <button onClick={resetToDefaults} className="btn">デフォルトに戻す</button>
+            </div>
+            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={savePreset} className="btn">Save Preset</button>
+              <button onClick={exportJSON} className="btn">Export</button>
+              <label className="btn file">
+                Import
+                <input aria-label="Import JSON" type="file" accept="application/json" onChange={(e) => importJSON(e.target.files?.[0] ?? null)} hidden />
+              </label>
+            </div>
+          </div>
+        </aside>
+
+        <main className="timer-panel">
+          <div className="timer-card">
+            <div className="hero">
+              <div>
+                <div className="time-big" aria-live="polite">{timeLeft}s</div>
+                <div className="current-label">{current?.label}</div>
+              </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 14, color: finished ? 'var(--success)' : 'var(--muted)' }}>{finished ? 'Done' : `Step ${index + 1}/${sequence.length}`}</div>
+                </div>
+            </div>
+
+            <div className="progress-wrap" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)}>
+              <div className="progress" style={{ width: `${percent}%` }} />
+            </div>
+
+            <div style={{ marginTop: 18 }} className="control-row">
+              <button onClick={handleStartPause} disabled={!allValid} className="primary" aria-pressed={running}>{running ? 'Pause' : finished ? 'Restart' : 'Start'}</button>
+              <button onClick={handleNext} className="btn">Next</button>
+              <button onClick={handleReset} className="btn">Reset</button>
+            </div>
+          </div>
+        </main>
       </div>
-
-      <div style={{ border: "1px solid #ddd", padding: 16, borderRadius: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{current?.label}</div>
-            <div style={{ color: "#666" }}>残り: {timeLeft}s</div>
+        {deleteIndex != null && (
+          <div className="modal-overlay" role="dialog" aria-modal="true">
+            <div className="modal">
+              <div style={{ marginBottom: 12 }}>Delete this step?</div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={cancelRemove} className="btn">Cancel</button>
+                <button onClick={doRemove} className="danger">Delete</button>
+              </div>
+            </div>
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 14, color: finished ? "green" : "#333" }}>{finished ? "終了" : `ステップ ${index + 1}/${sequence.length}`}</div>
-          </div>
-        </div>
-
-        <div style={{ height: 12, background: "#f0f0f0", borderRadius: 6, overflow: "hidden", marginTop: 12 }}>
-          <div style={{ width: `${percent}%`, height: "100%", background: "#4caf50", transition: "width 200ms linear" }} />
-        </div>
-
-        <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
-          <button onClick={handleStartPause} style={{ padding: "8px 12px" }}>
-            {running ? "一時停止" : finished ? "再実行" : "開始"}
-          </button>
-          <button onClick={handleNext} style={{ padding: "8px 12px" }}>次へ</button>
-          <button onClick={handleReset} style={{ padding: "8px 12px" }}>リセット</button>
-        </div>
-      </div>
+        )}
 
       <div style={{ marginTop: 18 }}>
-        <h3 style={{ marginBottom: 8 }}>これからの流れ</h3>
+        <h3 style={{ marginBottom: 8 }}>Upcoming</h3>
         <ol>
           {sequence.slice(index + 1).map((s: Step, i: number) => (
             <li key={i} style={{ marginBottom: 6 }}>
@@ -184,10 +306,8 @@ export default function ServerinTimerPage() {
           ))}
         </ol>
       </div>
-
-      <div style={{ marginTop: 12, color: "#666" }}>
-        <strong>備考:</strong> 読み上げ（TTS）は無効です。
-      </div>
+    
     </div>
+  </div>
   )
 }
