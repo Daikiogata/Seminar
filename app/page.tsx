@@ -5,12 +5,13 @@ import React, { useEffect, useRef, useState } from "react"
 type Step = { label: string; duration: number }
 
 const DEFAULT_SEQUENCE: Step[] = [
-  { label: "スクワット", duration: 30 },
-  { label: "休憩", duration: 10 },
-  { label: "腕立て伏せ", duration: 30 },
-  { label: "休憩", duration: 10 },
-  { label: "ジャンピングジャック", duration: 30 },
-  { label: "休憩", duration: 10 },
+  { label: "アップ", duration: 300 },
+  { label: "休憩", duration: 60 },
+  { label: "ラン", duration: 120 },
+  { label: "休憩", duration: 120 },
+  { label: "ラン", duration: 300 },
+  { label: "休憩", duration: 60 },
+  { label: "ラン", duration: 120 },
 ]
 
 export default function ServerinTimerPage() {
