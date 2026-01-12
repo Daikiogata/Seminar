@@ -23,6 +23,9 @@ export default function ServerinTimerPage() {
   const intervalRef = useRef<number | null>(null)
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null)
   const [presets, setPresets] = useState<{ name: string; seq: Step[] }[]>([])
+  const dragIndexRef = useRef<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [history, setHistory] = useState<{ ts: number; seq: Step[] }[]>([])
 
   // Load stored sequence and presets on mount to avoid SSR/CSR hydration mismatch
   useEffect(() => {
@@ -42,6 +45,15 @@ export default function ServerinTimerPage() {
       if (rawP) {
         const parsedP = JSON.parse(rawP)
         if (Array.isArray(parsedP)) setPresets(parsedP)
+      }
+    } catch (e) {
+      // ignore
+    }
+    try {
+      const rawH = localStorage.getItem("workout_history")
+      if (rawH) {
+        const parsedH = JSON.parse(rawH)
+        if (Array.isArray(parsedH)) setHistory(parsedH)
       }
     } catch (e) {
       // ignore
@@ -149,6 +161,66 @@ export default function ServerinTimerPage() {
       return arr
     })
   }
+  function handleDragStart(e: React.DragEvent<HTMLDivElement>, i: number) {
+    try {
+      e.dataTransfer.setData("text/plain", String(i))
+    } catch (err) {
+      // ignore
+    }
+    dragIndexRef.current = i
+  }
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>, i: number) {
+    e.preventDefault()
+    setDragOverIndex(i)
+  }
+  function handleDragLeave(i: number) {
+    setDragOverIndex((cur) => (cur === i ? null : cur))
+  }
+  function handleDrop(e: React.DragEvent<HTMLDivElement>, i: number) {
+    e.preventDefault()
+    setDragOverIndex(null)
+    const srcRaw = e.dataTransfer.getData("text/plain")
+    const src = Number(srcRaw)
+    if (Number.isNaN(src)) return
+    if (src === i) return
+    setSequence((s) => {
+      const arr = [...s]
+      const [moved] = arr.splice(src, 1)
+      arr.splice(i, 0, moved)
+      return arr
+    })
+    dragIndexRef.current = null
+  }
+  function handleDragEnd() {
+    dragIndexRef.current = null
+    setDragOverIndex(null)
+  }
+  function addToHistory(seqToSave: Step[]) {
+    try {
+      const snap = seqToSave.map((s) => ({ label: s.label, duration: s.duration }))
+      const entry = { ts: Date.now(), seq: snap }
+      setHistory((h) => {
+        const next = [entry, ...h].slice(0, 5)
+        try {
+          localStorage.setItem("workout_history", JSON.stringify(next))
+        } catch (e) {
+          // ignore
+        }
+        return next
+      })
+    } catch (e) {
+      // ignore
+    }
+  }
+  function applyHistory(i: number) {
+    const entry = history[i]
+    if (!entry) return
+    setSequence(entry.seq)
+    setIndex(0)
+    setTimeLeft(entry.seq[0]?.duration ?? 0)
+    setRunning(false)
+    setFinished(false)
+  }
   function confirmRemove(i: number) {
     setDeleteIndex(i)
   }
@@ -228,7 +300,17 @@ export default function ServerinTimerPage() {
         <aside className="menu-panel" aria-labelledby="menu-title">
           <h3 id="menu-title">Menu Settings</h3>
           {sequence.map((s: Step, i: number) => (
-            <div key={i} className="menu-row">
+            <div
+              key={i}
+              className="menu-row"
+              draggable={true}
+              onDragStart={(e) => handleDragStart(e, i)}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDrop={(e) => handleDrop(e, i)}
+              onDragLeave={() => handleDragLeave(i)}
+              onDragEnd={() => handleDragEnd()}
+              style={dragOverIndex === i ? { outline: "2px dashed #999" } : undefined}
+            >
               <div className="step-index">{i + 1}</div>
               <input aria-label={`Step ${i + 1} name`} value={s.label} onChange={(e) => updateStepLabel(i, e.target.value)} className="menu-input label" placeholder="Exercise name" />
               <input aria-label={`Step ${i + 1} seconds`} value={String(s.duration)} onChange={(e) => updateStepDuration(i, e.target.value)} type="number" min={0} className="menu-input duration" />
@@ -251,6 +333,7 @@ export default function ServerinTimerPage() {
             </div>
             <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
               <button onClick={savePreset} className="btn">Save Preset</button>
+              <button onClick={() => addToHistory(sequence)} className="btn">履歴を保存</button>
               <button onClick={exportJSON} className="btn">Export</button>
               <label className="btn file">
                 Import
@@ -306,6 +389,24 @@ export default function ServerinTimerPage() {
           ))}
         </ol>
       </div>
+    
+    <div style={{ marginTop: 18 }}>
+      <h3 style={{ marginBottom: 8 }}>Recent (last 5)</h3>
+      {history.length === 0 ? (
+        <div style={{ color: 'var(--muted)' }}>No recent workouts</div>
+      ) : (
+        <ul>
+          {history.map((h, hi) => (
+            <li key={h.ts} style={{ marginBottom: 8 }}>
+              <button className="btn" onClick={() => applyHistory(hi)}>
+                <div style={{ fontSize: 13, textAlign: 'left' }}>{new Date(h.ts).toLocaleString()}</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>{h.seq.map(s => s.label).slice(0,3).join(', ')}{h.seq.length>3? '...':''}</div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
     
     </div>
   </div>
